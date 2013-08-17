@@ -3,6 +3,33 @@ import csv
 import numpy as np
 
 
+"""
+NOTE: Database created in sqlprompt as following
+/*tables match existing csv structure*/
+CREATE TABLE questions (
+        QuestionId INTEGER, SequenceId INTEGER, QuizDevice INTEGER);
+CREATE TABLE test (T INTEGER, X REAL, Y REAL, Z REAL, SequenceId INTEGER);
+CREATE TABLE train (T INTEGER, X REAL, Y REAL, Z REAL, Device INTEGER);
+
+/*import data*/
+.mode csv
+.import questions.csv questions
+.import test.csv test
+.import train.csv train
+
+/*remove redundant header leftover from csv*/
+DELETE FROM questions WHERE QuestionId = 'QuestionId';
+DELETE FROM test WHERE T = 'T';
+DELETE FROM train WHERE T = 'T';
+
+/*index for speed*/
+CREATE INDEX idx_questions_SequenceId ON questions(SequenceId);
+CREATE INDEX idx_questions_QuizDevice ON questions(QuizDevice);
+CREATE INDEX idx_test_SequenceId ON test(SequenceId);
+CREATE INDEX idx_train_Device ON train(Device);
+"""
+
+
 def sqlite3get(dbfile, cmd):
     """
     Run a sqlite command on db and return the result
