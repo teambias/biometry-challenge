@@ -128,75 +128,36 @@ def create_training_summary_table(dbfile):
         FROM (
             SELECT t.X*t.X+t.Y*t.Y+t.Z*t.Z AS d, t.Device as Device
             FROM train t) GROUP BY Device;"""
-    con = sql.connect(dbfile)
-    with con:
+    with sql.connect(dbfile) as con:
         cur = con.cursor()
         cur.execute("DROP TABLE IF EXISTS train_summary;")
         cur.execute(create_cmd)
         cur.execute(insert_cmd)
 
 
-def sqlite3get(dbfile, cmd):
-    """
-    Run a sqlite command on db and return the result
-
-    Parameters:
-    * dbfile - database file
-    * cmd - sqlite command
-
-    Returns:
-    * resluting tuples OR None if failed
-    """
-    con = sql.connect(dbfile)
-    with con:
-        cur = con.cursor()
-        cur.execute(cmd)
-        dat = cur.fetchall()
-        return dat
-
-
-def extract_csv_summaries(
-        in_dbfile="biometric_data.sqlite",
-        out_csvfile="biometric_data_summary.csv"):
-    """
-    Calcualte summary stats for each device and write output as csv.
-
-    Note: slow, call once, then just use the csv
-    """
-    cmd = """SELECT
-        MAX(d)-MIN(d) AS range,
-        MIN(d) AS min,
-        MAX(d) AS max,
-        AVG(d) as avg,
-        AVG(d*d)-AVG(d)*AVG(d) AS variance,
-        Device
-        FROM (
-              SELECT t.X*t.X+t.Y*t.Y+t.Z*t.Z AS d, t.Device as Device
-              FROM train t) GROUP BY Device"""
-    dat = sqlite3get(in_dbfile, cmd)
-    csv_writer = csv.writer(open(out_csvfile, "w"))
-    csv_writer.writerows(dat)
-
-
-def make_transformed_variables_command(
-        in_csvfile="biometric_data_summary.csv"):
+def make_transformed_columns(dbfile):
     """
     Make SQL command fragment to transform sql variables so that they are
     normalized to training data.
     """
-    dat = csv.reader(open(in_csvfile, "r"))
-    keys = ("range", "min", "max", "avg", "variance")
-    biodata = []
-    for row in dat:
-        biodata += [[float(i) for i in row]]
-    biodata = np.array(biodata)
-    mmin = np.min(biodata, axis=0)
-    mmax = np.max(biodata, axis=0)
-    cmd = ", \n".join(["({0}-{1})/{2} AS t_{0}".format(
-                      x[0], x[1], x[2]) for x in zip(keys, mmin, mmax - mmin)])
-    return cmd
+    keys = ("range", "min", "max", "avg", "variance", "Device")
+    cmd = "SELECT {} FROM train_summary".format(",".join([k for k in keys]))
+    with sql.connect(dbfile) as con:
+        cur = con.cursor()
+        cur.execute(cmd)
+        dat = np.array(cur.fetchall())
+        mmin = np.min(dat, axis=0)
+        mmax = np.max(dat, axis=0)
+        cmd = ", \n".join(
+            ["({0}-{1})/{2} AS t_{0}".format(
+                x[0], x[1], x[2]) for x in zip(keys, mmin, mmax - mmin)[:-1]])
+        return cmd
+
 
 datadir = "data/"
-dbfile = "biometric_data.sqlite"
+dbfile = datadir + "biometric_data.sqlite"
 # create_table_from_csv(dbfile, datadir)  # Don't rerun if db is ok
 # create_training_summary_table(dbfile)   # Also not this one
+
+c = make_transformed_columns(dbfile)
+print c
