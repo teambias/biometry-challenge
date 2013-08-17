@@ -3,21 +3,17 @@ import csv
 import numpy as np
 
 
-def insert_csv_table(dbfile, csvfile, columns, table):
+def create_table(dbfile, columns, table):
     """
-    Insert csv data into table.
-
-    Will drop prexisting table!
+    Create table with given columns
 
     Parameters:
     * dbfile - database to write to
-    * csvfile - csvfile with table to read
     * columns - tuple of ("name", "type") for db
     * table - name of table to create
     """
-    print("Inserting table \"{}\" into database \"{}\" from csv file \"{}\"".
-          format(table, dbfile, csvfile))
-    with sql.connect(dbfile) as con, open(csvfile, "r") as infile:
+    print("Inserting table \"{}\" into database \"{}\"".format(table, dbfile))
+    with sql.connect(dbfile) as con:
         cur = con.cursor()
 
         # Drop old table if it existst
@@ -31,7 +27,23 @@ def insert_csv_table(dbfile, csvfile, columns, table):
         cur.execute("DELETE FROM {0} WHERE {1} = {1};".format(
                     table, columns[0][0]))
 
+
+def insert_csv_table(dbfile, csvfile, columns, table):
+    """
+    Insert csv data into table.
+
+    Will drop prexisting table!
+
+    Parameters:
+    * csvfile - csvfile with table to read
+    * dbfile, columns, table - see create_table
+    """
+    create_table(dbfile, columns, table)
+    with sql.connect(dbfile) as con, open(csvfile, "r") as infile:
+        cur = con.cursor()
+
         # Read data from csv
+        print("Reading from csv file \"{}\"".format(csvfile))
         csvdata = csv.reader(infile)
         floatdata = None
         for row in csvdata:
@@ -41,6 +53,7 @@ def insert_csv_table(dbfile, csvfile, columns, table):
             floatdata += [[float(i) for i in row]]
 
         # Write data to new table
+        print("Write data into table {} in dbfile {}".format(table, dbfile))
         cols = ",".join(["{}".format(c[0]) for c in columns])
         vals = ",".join(["?" for c in columns])
         cur.executemany(
@@ -110,41 +123,63 @@ def create_training_summary_table(dbfile):
     Parameters:
     * dbfile - database to write to
     """
-    create_cmd = """CREATE TABLE train_summary (
-        range REAL,
-        min REAL,
-        max REAL,
-        avg REAL,
-        variance REAL,
-        Device INTEGER);"""
-    insert_cmd = """INSERT INTO
-        train_summary(range,min,max,avg,variance,Device) SELECT
-        MAX(d)-MIN(d) AS range,
-        MIN(d) AS min,
-        MAX(d) AS max,
-        AVG(d) as avg,
-        AVG(d*d)-AVG(d)*AVG(d) AS variance,
-        Device
-        FROM (
-            SELECT t.X*t.X+t.Y*t.Y+t.Z*t.Z AS d, t.Device as Device
-            FROM train t) GROUP BY Device;"""
+    columns = (("range", "REAL"), ("min", "REAL"), ("max", "REAL"),
+               ("avg", "REAL"), ("variance", "REAL"), ("Device", "INTEGER"))
+
+    create_table(dbfile, columns, "train_summary")
+
     with sql.connect(dbfile) as con:
         cur = con.cursor()
-        cur.execute("DROP TABLE IF EXISTS train_summary;")
-        cur.execute(create_cmd)
-        cur.execute(insert_cmd)
+        cur.execute("""INSERT INTO
+            train_summary(range,min,max,avg,variance,Device) SELECT
+            MAX(d)-MIN(d) AS range,
+            MIN(d) AS min,
+            MAX(d) AS max,
+            AVG(d) as avg,
+            AVG(d*d)-AVG(d)*AVG(d) AS variance,
+            Device
+            FROM (
+                SELECT t.X*t.X+t.Y*t.Y+t.Z*t.Z AS d, t.Device as Device
+                FROM train t) GROUP BY Device;""")
 
 
-def make_transformed_columns(dbfile):
+def create_testing_summary_table(dbfile):
+    """
+    Create testing summary table in dbfile
+
+    Parameters:
+    * dbfile - database to write to
+    """
+    columns = (("range", "REAL"), ("min", "REAL"), ("max", "REAL"),
+               ("avg", "REAL"), ("variance", "REAL"),
+               ("SequenceId", "INTEGER"))
+
+    create_table(dbfile, columns, "test_summary")
+
+    with sql.connect(dbfile) as con:
+        cur = con.cursor()
+        cur.execute("""INSERT INTO
+            test_summary(range,min,max,avg,variance,SequenceId) SELECT
+            MAX(d)-MIN(d) AS range,
+            MIN(d) AS min,
+            MAX(d) AS max,
+            AVG(d) as avg,
+            AVG(d*d)-AVG(d)*AVG(d) AS variance,
+            SequenceId
+            FROM (
+                SELECT t.X*t.X+t.Y*t.Y+t.Z*t.Z AS d, t.SequenceId as SequenceId
+                FROM test t) GROUP BY SequenceId;""")
+
+
+def make_transformed_columns(dbfile, keys):
     """
     Make SQL command fragment to transform sql variables so that they are
     normalized to training data.
     """
-    keys = ("range", "min", "max", "avg", "variance", "Device")
-    cmd = "SELECT {} FROM train_summary".format(",".join([k for k in keys]))
     with sql.connect(dbfile) as con:
         cur = con.cursor()
-        cur.execute(cmd)
+        cur.execute("SELECT {} FROM train_summary".format(
+                    ",".join([k for k in keys])))
         dat = np.array(cur.fetchall())
         mmin = np.min(dat, axis=0)
         mmax = np.max(dat, axis=0)
@@ -154,10 +189,27 @@ def make_transformed_columns(dbfile):
         return cmd
 
 
+def make_transformed_table(dbfile):
+    """
+    """
+    columns = (("range", "REAL"), ("min", "REAL"), ("max", "REAL"),
+               ("avg", "REAL"), ("variance", "REAL"), ("Device", "INTEGER"))
+    keys = [c[0] for c in columns][:-1]
+    trf = make_transformed_columns(dbfile, keys)
+    # create_table(dbfile, columns, "train_summary_transformed")
+    with sql.connect(dbfile) as con:
+        cur = con.cursor()
+        # Get transformed training data
+        cur.execute("SELECT {}, Device FROM train_summary".format(trf))
+        print cur.fetchall()
+        # Get transformed testing data
+        cur.execute("SELECT {}, SequenceId FROM test_summary".format(trf))
+        print cur.fetchall()
+
 datadir = "data/"
 dbfile = datadir + "biometric_data.sqlite"
 # create_table_from_csv(dbfile, datadir)  # Don't rerun if db is ok
 # create_training_summary_table(dbfile)   # Also not this one
+# create_testing_summary_table(dbfile)   # ... yes not this either...
 
-c = make_transformed_columns(dbfile)
-print c
+make_transformed_table(dbfile)
