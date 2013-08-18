@@ -28,6 +28,7 @@ def create_table(dbfile, columns, table):
     """
     LOGGER.debug("Inserting table \"{}\" into database \"{}\""
                  .format(table, dbfile))
+    LOGGER.debug("Columns:" + ", ".join(["|".join(c) for c in columns]))
     with sql.connect(dbfile) as con:
         cur = con.cursor()
 
@@ -186,18 +187,18 @@ def make_norm_select(dbfile, keys):
     * dbfile - database to use
     * keys - keys to select
     """
-    LOGGER.debug("Making the select command normalise columns for dbfile {}"
-                 .format(dbfile))
+    key_str = ",".join([k for k in keys])
+    LOGGER.debug("Making the select command normalise columns" +
+                 " for dbfile {} with keys {}"
+                 .format(dbfile, key_str))
     with sql.connect(dbfile) as con:
         cur = con.cursor()
-        cur.execute("SELECT {} FROM train_summary".format(
-                    ",".join([k for k in keys])))
+        cur.execute("SELECT {} FROM train_summary".format(key_str))
         dat = np.array(cur.fetchall())
         mmin = np.min(dat, axis=0)
         mmax = np.max(dat, axis=0)
-        return ", \n".join(
-            ["({0}-{1})/{2} AS t_{0}".format(
-                x[0], x[1], x[2]) for x in zip(keys, mmin, mmax - mmin)[:-1]])
+        return ["({0}-{1})/{2} AS t_{0}".format(
+                x[0], x[1], x[2]) for x in zip(keys, mmin, mmax - mmin)[:-1]]
 
 
 def create_norm_table(dbfile, source_table, table, columns, key):
@@ -210,7 +211,22 @@ def create_norm_table(dbfile, source_table, table, columns, key):
     * columns - columns to normalise
     """
     LOGGER.debug(
-        "Creating normalised table \"{}\" from " + "source table \"{}\" in database \"{}\"".format(table, source_table, dbfile))
+        "Creating normalised table \"{}\" ".format(table) +
+        "from source table \"{}\" in database \"{}\"".
+        format(source_table, dbfile))
+    select_cmd = ", ".join([c[2] for c in columns])
+    new_columns = [("t_" + i[0], i[1], i[2]) for i in columns]
+    new_columns += [(key, 'INTEGER')]
+    col_tkeys = ", ".join(["t_" + c[0] for c in columns])
+    col_keys = ", ".join([c[0] for c in columns])
+
+    create_table(dbfile, new_columns, table)
+    with sql.connect(dbfile) as con:
+        cur = con.cursor()
+        cmd = "INSERT INTO {0}({1}, {2}) SELECT {3}, {2} FROM {4}".format(
+            table, col_tkeys, key, select_cmd, source_table, col_keys)
+        LOGGER.debug(cmd)
+        cur.execute(cmd)
 
 
 def make_normed_summaries(dbfile):
@@ -222,20 +238,23 @@ def make_normed_summaries(dbfile):
     """
     LOGGER.debug("Making the transformed tables in in dbfile \"{}\""
                  .format(dbfile))
-    keys = [c[0] for c in summary_columns][:-1]
+    keys = [c[0] for c in summary_columns]
     norm = make_norm_select(dbfile, keys)
     norm_columns = [(i[0][0], i[0][1], i[1])
                     for i in zip(summary_columns, norm)]
-    create_summary_table(dbfile, "train_summary_norm", "Device", norm_columns)
-    create_summary_table(
-        dbfile, "test_summary_norm", "SequenceId", norm_columns)
+
+    create_norm_table(dbfile, "train_summary",
+                      "train_summary_norm", norm_columns, "Device")
+    create_norm_table(dbfile, "test_summary",
+                      "test_summary_norm", norm_columns, "SequenceId")
 
 
 datadir = "data/"
 # dbfile = datadir + "biometric_data.sqlite"
 dbfile = datadir + "biometric_data_2.sqlite"
-# create_tables_from_csv(dbfile, datadir)  # Don't rerun if db is ok
-create_summary_tables(dbfile)
-# make_normed_summaries(dbfile)
+# Don't rerun any of these if already done it once...
+# create_tables_from_csv(dbfile, datadir)
+# create_summary_tables(dbfile)
+make_normed_summaries(dbfile)
 
 LOGGER.debug("Done work with dbfile \"{}\"".format(dbfile))
